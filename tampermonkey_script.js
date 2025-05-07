@@ -186,8 +186,8 @@
     function scrapeConversation() {
       debug("Scraping conversation");
       
-      // Find all conversation turns
-      const blocks = document.querySelectorAll('article[data-testid^="conversation-turn-"]');
+      // Find all conversation turns - updated selectors for current ChatGPT DOM
+      const blocks = document.querySelectorAll('div[data-testid^="conversation-turn-"]');
       debug(`Found ${blocks.length} conversation blocks`);
       
       const msgs = [];
@@ -197,15 +197,12 @@
         citationLinks = [];
         adjacentCitations = [];
         
-        // Check if it's a user or assistant message
-        const messageElement = block.querySelector('[data-message-author-role]');
-        if (!messageElement) {
-          debug(`Block ${index} has no message-author-role attribute`);
-          return;
-        }
+        // Get the role information - multiple attempts based on possible DOM structures
+        const role = 
+          block.querySelector('[data-message-author-role]')?.getAttribute('data-message-author-role') || 
+          (block.querySelector('.markdown') ? 'assistant' : 'user');
         
-        const role = messageElement.getAttribute('data-message-author-role');
-        debug(`Block ${index} has role: ${role}`);
+        debug(`Block ${index} assigned role: ${role}`);
         
         let content = "";
         
@@ -261,12 +258,12 @@
           }
         } else if (role === "user") {
           // User messages are in a whitespace-pre-wrap div
-          const userContent = block.querySelector('.whitespace-pre-wrap');
+          const userContent = block.querySelector('.whitespace-pre-wrap') || block.querySelector('p');
           if (userContent) {
             content = userContent.textContent.trim();
             debug(`Extracted user content (length: ${content.length})`);
           } else {
-            debug(`Block ${index} (user) has no .whitespace-pre-wrap element`);
+            debug(`Block ${index} (user) has no content element`);
           }
         }
         
@@ -277,6 +274,56 @@
   
       debug(`Extracted ${msgs.length} messages`);
       return msgs;
+    }
+    
+    // Extract content from a deep research report
+    function scrapeResearchReport(researchElement) {
+      debug("Scraping research report");
+      
+      // Reset citation collection
+      citationLinks = [];
+      adjacentCitations = [];
+      
+      // Extract content
+      let content = turndown.turndown(researchElement.innerHTML).trim();
+      
+      // Post-process to fix link formatting and spacing issues
+      content = postProcessMarkdown(content);
+      
+      debug(`Extracted research content (length: ${content.length})`);
+      
+      return content;
+    }
+    
+    // Share a research report
+    async function shareResearchReport(researchElement) {
+      debug("Sharing research report");
+      
+      try {
+        banner("Preparing research report…", "info", 1500);
+        
+        // Get research content
+        const content = scrapeResearchReport(researchElement);
+        if (!content) {
+          throw new Error("Could not extract research report content");
+        }
+        
+        // Build markdown
+        let md = "# ChatGPT Research Report\n\n";
+        md += content;
+        
+        // Upload to Gist
+        const pat = await getGitHubPAT();
+        banner("Uploading Gist…", "info", 0);
+        
+        // Upload with research report title
+        const url = await uploadGist(md, pat, "ChatGPT Research Report");
+        banner("Gist created!", "success");
+        window.open(url, "_blank");
+      } catch (e) {
+        console.error(e);
+        banner(e.message, "error", 6000);
+      }
     }
     
     // Post-process markdown to fix common link formatting issues
@@ -365,7 +412,7 @@
     /*───────────────────────────────────────────────*/
     /*  GITHUB GIST API                             */
     /*───────────────────────────────────────────────*/
-    function uploadGist(markdown, pat) {
+    function uploadGist(markdown, pat, description = "ChatGPT Conversation") {
       debug("Uploading to GitHub Gist API");
       return new Promise((res, rej) => {
         GM_xmlhttpRequest({
@@ -376,7 +423,7 @@
             Accept: "application/vnd.github+json",
           },
           data: JSON.stringify({
-            description: "ChatGPT Conversation",
+            description: description,
             public: false,
             files: {
               chatgpt_conversation: {
@@ -445,6 +492,116 @@
         }
       };
       return btn;
+    }
+    
+    // Create share button for a research report
+    function createResearchShareButton(researchElement, position = 'top') {
+      debug(`Creating ${position} share button for research report`);
+      
+      // Create unique class for this button position
+      const buttonClass = `chatgpt-research-share-btn-${position}`;
+      
+      // Check if this report already has a button in this position
+      if (researchElement.querySelector(`.${buttonClass}`)) {
+        return;
+      }
+      
+      // Create the button
+      const btn = document.createElement("button");
+      btn.className = `chatgpt-research-share-btn ${buttonClass}`;
+      btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>`;
+      btn.title = "Share this research report to GitHub Gist";
+      
+      // Set position-specific styles
+      let positionStyles = '';
+      if (position === 'top') {
+        positionStyles = `
+          top: 8px;
+          right: 8px;
+        `;
+      } else if (position === 'bottom') {
+        positionStyles = `
+          bottom: 8px;
+          right: 8px;
+        `;
+      }
+      
+      // Style the button
+      btn.style.cssText = `
+        background: #19c37d;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        width: 28px;
+        height: 28px;
+        padding: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        position: absolute;
+        ${positionStyles}
+        opacity: 0.8;
+        transition: opacity 0.2s;
+        z-index: 1000;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      `;
+      
+      // Add hover effect
+      btn.addEventListener('mouseover', () => {
+        btn.style.opacity = '1';
+      });
+      
+      btn.addEventListener('mouseout', () => {
+        btn.style.opacity = '0.8';
+      });
+      
+      // Add click event
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        await shareResearchReport(researchElement);
+      });
+      
+      return btn;
+    }
+    
+    // Add share buttons to research reports only (top and bottom)
+    function addResearchShareButtons() {
+      debug("Adding share buttons to research reports");
+      
+      // Find all deep research reports
+      const researchReports = document.querySelectorAll('.deep-research-result');
+      debug(`Found ${researchReports.length} research reports`);
+      
+      researchReports.forEach((report) => {
+        // Make sure the report has a relative position for absolute positioning of the buttons
+        if (!report.style.position || report.style.position === 'static') {
+          report.style.position = 'relative';
+        }
+        
+        // Check for existing buttons
+        const hasTopButton = report.querySelector('.chatgpt-research-share-btn-top');
+        const hasBottomButton = report.querySelector('.chatgpt-research-share-btn-bottom');
+        
+        // Add top button if needed
+        if (!hasTopButton) {
+          const topBtn = createResearchShareButton(report, 'top');
+          if (topBtn) {
+            report.appendChild(topBtn);
+            debug("Added top share button to research report");
+          }
+        }
+        
+        // Add bottom button if needed
+        if (!hasBottomButton) {
+          const bottomBtn = createResearchShareButton(report, 'bottom');
+          if (bottomBtn) {
+            report.appendChild(bottomBtn);
+            debug("Added bottom share button to research report");
+          }
+        }
+      });
     }
   
     /*───────────────────────────────────────────────*/
@@ -538,6 +695,10 @@
         const el = document.querySelector(`[data-testid="${id}"], [data-testid^="${id}"]`);
         debug(`Element '${id}': ${el ? "Found" : "Not found"}`);
       });
+      
+      // Additional debugging info
+      debug(`Found ${document.querySelectorAll('.deep-research-result').length} research reports`);
+      debug(`Found ${document.querySelectorAll('.markdown').length} markdown elements`);
     }
     
     function injectButton() {
@@ -575,9 +736,12 @@
         floatBtn.style.cssText = "position: fixed; top: 12px; right: 12px; padding: 6px 12px; background: #19c37d; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; display: flex; align-items: center; gap: 5px; z-index: 9999;";
         document.body.appendChild(floatBtn);
       }
+      
+      // Also add share buttons to research reports
+      addResearchShareButtons();
     }
   
-    // Add global styles for our button
+    // Add global styles for our buttons
     GM_addStyle(`
       .chatgpt-share-btn {
         background: #19c37d !important;
@@ -607,6 +771,61 @@
         width: 16px !important;
         height: 16px !important;
       }
+      
+      .chatgpt-research-share-btn {
+        background: #19c37d !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 4px !important;
+        width: 28px !important;
+        height: 28px !important;
+        padding: 6px !important;
+        cursor: pointer !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        position: absolute !important;
+        opacity: 0.8;
+        transition: opacity 0.2s ease !important;
+        z-index: 1000 !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
+      }
+      
+      .chatgpt-research-share-btn:hover {
+        opacity: 1 !important;
+        background: #15a36b !important;
+      }
+      
+      .chatgpt-research-share-btn svg {
+        width: 12px !important;
+        height: 12px !important;
+      }
+      
+      /* Position-specific styles */
+      .chatgpt-research-share-btn-top {
+        top: 8px !important;
+        right: 8px !important;
+      }
+      
+      .chatgpt-research-share-btn-bottom {
+        bottom: 8px !important;
+        right: 8px !important;
+      }
+      
+      /* Make sure research reports have position relative for button placement */
+      .deep-research-result {
+        position: relative !important;
+        padding-bottom: 40px !important; /* Add padding to make room for bottom button */
+      }
+      
+      /* Hide buttons by default, show on hover */
+      .deep-research-result:not(:hover) .chatgpt-research-share-btn {
+        opacity: 0.3 !important;
+      }
+      
+      .deep-research-result:hover .chatgpt-research-share-btn {
+        opacity: 0.9 !important;
+      }
     `);
   
     // Delay initial injection to ensure DOM is loaded
@@ -617,7 +836,10 @@
       // Observe SPA mutations + periodic retry (covers nav changes)
       debug("Setting up mutation observer");
       const obs = new MutationObserver((mutations) => {
-        // Only re-inject if button is not present
+        // Always check for new research reports
+        addResearchShareButtons();
+        
+        // Only re-inject main button if not present
         if (!document.querySelector(".chatgpt-share-btn")) {
           debug(`Mutation observed (${mutations.length} changes) - button not found, re-injecting`);
           injectButton();
@@ -634,6 +856,9 @@
           debug("Button found, clearing retry interval");
           clearInterval(retry);
         }
+        
+        // Always try to add research share buttons
+        addResearchShareButtons();
       }, 3000);
       
       // Clear retry after reasonable timeout
