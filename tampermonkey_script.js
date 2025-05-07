@@ -186,8 +186,63 @@
     function scrapeConversation() {
       debug("Scraping conversation");
       
-      // Find all conversation turns - updated selectors for current ChatGPT DOM
-      const blocks = document.querySelectorAll('div[data-testid^="conversation-turn-"]');
+      // Try multiple selectors to find conversation turns
+      const selectors = [
+        'div[data-testid^="conversation-turn-"]',   // New format div
+        'article[data-testid^="conversation-turn-"]', // New format article
+        'div[data-message-author-role]',            // Elements with direct role attribute
+        'article[data-message-author-role]',        // Articles with direct role attribute
+        '.text-message',                            // Message containers
+        '.min-h-[20px]',                            // Minimal height message containers
+        '.markdown',                                // Markdown content containers
+        'main .flex.flex-col.items-center > div'    // General conversation container children
+      ];
+      
+      let blocks = [];
+      
+      // Try each selector until we find some conversation blocks
+      for (const selector of selectors) {
+        blocks = document.querySelectorAll(selector);
+        debug(`Trying selector "${selector}" - found ${blocks.length} elements`);
+        
+        if (blocks.length > 0) {
+          debug(`Using selector: ${selector}`);
+          break;
+        }
+      }
+      
+      // Fallback: If no blocks found with specific selectors, try a more generic approach
+      if (blocks.length === 0) {
+        // Look for any elements that might contain markdown content or message text
+        debug("Using fallback approach to find conversation elements");
+        
+        // First try to find the main conversation container
+        const mainThread = document.querySelector('main div[class*="flex-col"]');
+        if (mainThread) {
+          // Look for direct children that are likely conversation turns
+          blocks = mainThread.querySelectorAll(':scope > div');
+          debug(`Found ${blocks.length} potential blocks via main thread approach`);
+        }
+        
+        // If that didn't work, try to find all markdown elements and work backwards
+        if (blocks.length === 0) {
+          const markdownElements = document.querySelectorAll('.markdown');
+          debug(`Found ${markdownElements.length} markdown elements`);
+          
+          if (markdownElements.length > 0) {
+            // For each markdown element, find its closest conversation block container
+            blocks = Array.from(markdownElements).map(el => {
+              // Look for parent with a minimum height constraint (likely a message container)
+              return el.closest('div[class*="min-h-"]') || el.closest('div[class*="flex"]') || el.parentElement;
+            }).filter(el => el !== null);
+            
+            // Remove duplicates
+            blocks = [...new Set(blocks)];
+            debug(`Found ${blocks.length} unique conversation blocks via markdown elements`);
+          }
+        }
+      }
+      
       debug(`Found ${blocks.length} conversation blocks`);
       
       const msgs = [];
@@ -198,9 +253,23 @@
         adjacentCitations = [];
         
         // Get the role information - multiple attempts based on possible DOM structures
-        const role = 
-          block.querySelector('[data-message-author-role]')?.getAttribute('data-message-author-role') || 
-          (block.querySelector('.markdown') ? 'assistant' : 'user');
+        let role = block.getAttribute('data-message-author-role') ||
+                   block.querySelector('[data-message-author-role]')?.getAttribute('data-message-author-role');
+                   
+        // If no role attribute is found, try to determine role based on content structure
+        if (!role) {
+          if (block.querySelector('.markdown') || block.classList.contains('markdown')) {
+            role = 'assistant';
+          } else if (block.querySelector('.whitespace-pre-wrap') || block.classList.contains('whitespace-pre-wrap')) {
+            role = 'user';
+          } else if (block.querySelectorAll('p, ul, ol, pre, code').length > 0) {
+            // If it has rich text elements, it's likely the assistant
+            role = 'assistant';
+          } else {
+            // Try to determine role by position (odd indices are assistant in typical chat)
+            role = index % 2 === 0 ? 'user' : 'assistant';
+          }
+        }
         
         debug(`Block ${index} assigned role: ${role}`);
         
@@ -220,13 +289,18 @@
             debug(`Extracted deep research content (length: ${content.length})`);
           } else {
             // Regular assistant messages have a markdown element
-            const markdown = block.querySelector('.markdown');
+            const markdown = block.querySelector('.markdown') || block;
             if (markdown) {
-              content = turndown.turndown(markdown.innerHTML).trim();
+              // Use innerHTML if it's a content container, or textContent if it's just text
+              const hasRichContent = markdown.querySelectorAll('p, code, pre, ol, ul, table').length > 0;
+              content = hasRichContent 
+                ? turndown.turndown(markdown.innerHTML).trim() 
+                : markdown.textContent.trim();
+                
               content = postProcessMarkdown(content);
               debug(`Extracted assistant content (length: ${content.length})`);
             } else {
-              debug(`Block ${index} (assistant) has no .markdown element`);
+              debug(`Block ${index} (assistant) has no content element`);
             }
           }
           
@@ -257,9 +331,14 @@
             }
           }
         } else if (role === "user") {
-          // User messages are in a whitespace-pre-wrap div
-          const userContent = block.querySelector('.whitespace-pre-wrap') || block.querySelector('p');
+          // User messages can be found in various containers
+          const userContent = 
+            block.querySelector('.whitespace-pre-wrap') || 
+            block.querySelector('p') ||
+            block;
+            
           if (userContent) {
+            // User content is typically plain text
             content = userContent.textContent.trim();
             debug(`Extracted user content (length: ${content.length})`);
           } else {
@@ -699,6 +778,26 @@
       // Additional debugging info
       debug(`Found ${document.querySelectorAll('.deep-research-result').length} research reports`);
       debug(`Found ${document.querySelectorAll('.markdown').length} markdown elements`);
+      
+      // Debug conversation blocks
+      debug(`Testing conversation block selectors`);
+      const conversationSelectors = [
+        'div[data-testid^="conversation-turn-"]',
+        'article[data-testid^="conversation-turn-"]',
+        'div[data-message-author-role]',
+        'article[data-message-author-role]',
+        '.min-h-[20px]',
+        '.whitespace-pre-wrap'
+      ];
+      
+      conversationSelectors.forEach(selector => {
+        try {
+          const elements = document.querySelectorAll(selector);
+          debug(`Selector "${selector}": ${elements.length} elements`);
+        } catch (e) {
+          debug(`Error with selector "${selector}": ${e.message}`);
+        }
+      });
     }
     
     function injectButton() {
