@@ -52,7 +52,5 @@ See `scrapeConversation()` in the userscript. It identifies messages using the d
 
 ---
 ## Uninstall
-*Disable* the userscript from Tampermonkey or simply delete it. Stored PATs can be purged via Tampermonkey's *Storage* tab.
-
----
-© 2025 Alex Strick van Linschoten — MIT License
+*Disable* the userscript from Tampermonkey or simply delete it. Stored PATs can
+be purged via Tampermonkey's *Storage* tab.
